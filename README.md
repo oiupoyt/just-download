@@ -1,2 +1,7 @@
 # just-download
-simple frontend + backend to download various aspects (thumnails, audio, full video, etc) from a youtube link and instagram(broken a bit, will work lator)
+- youtube downloads for thumnail, video (including shorts), audio only, subtitles, 
+ - channel art comin soon (broken for now)
+- instagram downloads for thumbnail, reels, posts (**only public accounts or private accounts the the account follows lmao**)
+ - channel avater broken rn
+ 
+justdownload.netlify.app
