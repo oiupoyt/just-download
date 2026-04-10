@@ -3,21 +3,20 @@ YouTube service — all yt-dlp operations.
 """
 
 import asyncio
-import uuid
 import re
+import uuid
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import yt_dlp
 
 DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# shared yt-dlp options applied to every call
 _BASE_OPTS = {
-    "quiet": True,
+    "quiet":       True,
     "no_warnings": True,
-    "noprogress": True,
+    "noprogress":  True,
 }
 
 
@@ -34,7 +33,7 @@ def _safe(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "_", name or "file")[:80]
 
 
-def _fmt_duration(seconds: int) -> str:
+def _fmt_duration(seconds) -> str:
     if not seconds:
         return "0:00"
     h, rem = divmod(int(seconds), 3600)
@@ -49,6 +48,14 @@ def _parse_time(t: str) -> float:
     if len(parts) == 2:
         return parts[0] * 60 + parts[1]
     return parts[0]
+
+
+def _download_image(url: str, dest: Path) -> Path:
+    import httpx
+    resp = httpx.get(url, follow_redirects=True, timeout=20)
+    resp.raise_for_status()
+    dest.write_bytes(resp.content)
+    return dest
 
 
 # ── info ──────────────────────────────────────────────────────────────────────
@@ -92,10 +99,9 @@ async def download_video(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
 ) -> Tuple[str, str]:
-    uid = _uid()
+    uid      = _uid()
     out_tmpl = str(DOWNLOAD_DIR / f"yt_video_{uid}.%(ext)s")
 
-    # build format selector
     if resolution == "best":
         fmt_sel = f"bestvideo[ext={fmt}]+bestaudio/bestvideo+bestaudio/best"
     else:
@@ -106,9 +112,9 @@ async def download_video(
 
     opts = {
         **_BASE_OPTS,
-        "format":               fmt_sel,
-        "outtmpl":              out_tmpl,
-        "merge_output_format":  fmt,
+        "format":              fmt_sel,
+        "outtmpl":             out_tmpl,
+        "merge_output_format": fmt,
     }
 
     if start_time or end_time:
@@ -119,23 +125,18 @@ async def download_video(
             end = end_s if end_s is not None else info_dict.get("duration", 86400)
             return [{"start_time": start_s, "end_time": end}]
 
-        opts["download_ranges"]        = _range_fn
+        opts["download_ranges"]         = _range_fn
         opts["force_keyframes_at_cuts"] = True
 
     def _dl():
         with yt_dlp.YoutubeDL(opts) as ydl:
             info  = ydl.extract_info(url)
             title = _safe(info.get("title", "video"))
-            ext   = info.get("ext", fmt)
-            # find the actual output file
-            final = DOWNLOAD_DIR / f"yt_video_{uid}.{ext}"
-            if not final.exists():
-                # yt-dlp may have merged to a different ext
-                candidates = list(DOWNLOAD_DIR.glob(f"yt_video_{uid}.*"))
-                if not candidates:
-                    raise FileNotFoundError("output file not found after download")
-                final = candidates[0]
-            return str(final), f"{title}.{final.suffix.lstrip('.')}"
+        candidates = list(DOWNLOAD_DIR.glob(f"yt_video_{uid}.*"))
+        if not candidates:
+            raise FileNotFoundError("output file not found after download")
+        final = candidates[0]
+        return str(final), f"{title}{final.suffix}"
 
     return await _run(_dl)
 
@@ -171,13 +172,11 @@ async def download_audio(
         with yt_dlp.YoutubeDL(opts) as ydl:
             info  = ydl.extract_info(url)
             title = _safe(info.get("title", "audio"))
-            final = DOWNLOAD_DIR / f"yt_audio_{uid}.{fmt}"
-            if not final.exists():
-                candidates = list(DOWNLOAD_DIR.glob(f"yt_audio_{uid}.*"))
-                if not candidates:
-                    raise FileNotFoundError("audio file not found after download")
-                final = candidates[0]
-            return str(final), f"{title}.{final.suffix.lstrip('.')}"
+        candidates = list(DOWNLOAD_DIR.glob(f"yt_audio_{uid}.*"))
+        if not candidates:
+            raise FileNotFoundError("audio file not found after download")
+        final = candidates[0]
+        return str(final), f"{title}{final.suffix}"
 
     return await _run(_dl)
 
@@ -216,12 +215,12 @@ async def download_subtitles(url: str, lang: str = "en") -> Tuple[str, str]:
 
     opts = {
         **_BASE_OPTS,
-        "skip_download":      True,
-        "writesubtitles":     True,
-        "writeautomaticsub":  True,
-        "subtitleslangs":     [lang],
-        "subtitlesformat":    "srt",
-        "outtmpl":            out_tmpl,
+        "skip_download":     True,
+        "writesubtitles":    True,
+        "writeautomaticsub": True,
+        "subtitleslangs":    [lang],
+        "subtitlesformat":   "srt",
+        "outtmpl":           out_tmpl,
     }
 
     def _dl():
@@ -229,52 +228,127 @@ async def download_subtitles(url: str, lang: str = "en") -> Tuple[str, str]:
             info  = ydl.extract_info(url, download=True)
             title = _safe(info.get("title", "subtitles"))
         for ext in ("srt", "vtt", "ass"):
-            # yt-dlp names it: yt_subs_{uid}.{lang}.{ext}
             candidate = DOWNLOAD_DIR / f"yt_subs_{uid}.{lang}.{ext}"
             if candidate.exists():
                 return str(candidate), f"{title}.{lang}.{ext}"
-        # fallback: any subtitle file matching uid
         candidates = list(DOWNLOAD_DIR.glob(f"yt_subs_{uid}.*"))
         if candidates:
             return str(candidates[0]), candidates[0].name
-        raise FileNotFoundError(f"no subtitles found for lang={lang} — video may not have them")
+        raise FileNotFoundError(
+            f"no subtitles found for lang={lang} — video may not have them"
+        )
 
     return await _run(_dl)
 
 
 # ── channel art ───────────────────────────────────────────────────────────────
 
-async def download_channel_art(channel_url: str) -> list:
-    def _dl():
-        import httpx
+async def download_channel_art(channel_url: str) -> List[dict]:
+    """
+    Downloads channel avatar and banner as separate JPEG files.
+    Returns list of {"type", "filename", "url"} dicts.
+    Avatar and banner are identified by aspect ratio heuristics.
+    """
 
-        opts = {**_BASE_OPTS, "skip_download": True, "extract_flat": True}
+    def _dl():
+        uid = _uid()
+        results = []
+
+        opts = {
+            **_BASE_OPTS,
+            "skip_download": True,
+            "extract_flat":  True,
+        }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(channel_url, download=False)
 
-        results = []
-        uid = _uid()
-
-        # avatar — last thumbnail is usually highest res
         thumbnails = info.get("thumbnails") or []
-        avatar_url = thumbnails[-1].get("url") if thumbnails else info.get("thumbnail")
+
+        # ── avatar ────────────────────────────────────────────────────────────
+        # avatars are square-ish; YouTube avatar thumbnails often come from
+        # ggpht.com or have "photo" in the URL
+        avatar_url = None
+        avatar_candidates = [
+            t for t in thumbnails
+            if t.get("url") and _is_avatar(t)
+        ]
+        if avatar_candidates:
+            # pick highest resolution among avatar candidates
+            avatar_url = max(
+                avatar_candidates,
+                key=lambda t: (t.get("width") or 0) * (t.get("height") or 0)
+            )["url"]
+        elif thumbnails:
+            # last resort: use the last thumbnail
+            avatar_url = thumbnails[-1]["url"]
+
         if avatar_url:
             path = DOWNLOAD_DIR / f"yt_ch_{uid}_avatar.jpg"
-            data = httpx.get(avatar_url, follow_redirects=True, timeout=15).content
-            path.write_bytes(data)
-            results.append({"type": "avatar", "url": f"/files/{path.name}"})
+            try:
+                _download_image(avatar_url, path)
+                results.append({
+                    "type":     "avatar",
+                    "filename": path.name,
+                    "url":      f"/files/{path.name}",
+                })
+            except Exception as e:
+                print(f"[yt] avatar download failed: {e}")
 
-        # banner
-        banner_url = info.get("header_image") or info.get("banner")
+        # ── banner ────────────────────────────────────────────────────────────
+        # banners are very wide (ratio > 3:1), or keyed explicitly
+        banner_url = (
+            info.get("header_image")
+            or info.get("banner")
+        )
+        if not banner_url:
+            banner_candidates = [
+                t for t in thumbnails
+                if t.get("url") and _is_banner(t)
+            ]
+            if banner_candidates:
+                banner_url = max(
+                    banner_candidates,
+                    key=lambda t: (t.get("width") or 0)
+                )["url"]
+
         if banner_url:
             path = DOWNLOAD_DIR / f"yt_ch_{uid}_banner.jpg"
-            data = httpx.get(banner_url, follow_redirects=True, timeout=15).content
-            path.write_bytes(data)
-            results.append({"type": "banner", "url": f"/files/{path.name}"})
+            try:
+                _download_image(banner_url, path)
+                results.append({
+                    "type":     "banner",
+                    "filename": path.name,
+                    "url":      f"/files/{path.name}",
+                })
+            except Exception as e:
+                print(f"[yt] banner download failed: {e}")
 
         if not results:
-            raise ValueError("no channel art found — try passing the full channel URL")
+            raise ValueError(
+                "no channel art found — pass a full channel URL like "
+                "youtube.com/@channelname or youtube.com/channel/UCxxxxxx"
+            )
 
         return results
 
     return await _run(_dl)
+
+
+def _is_avatar(t: dict) -> bool:
+    w = t.get("width") or 0
+    h = t.get("height") or 1
+    url = t.get("url", "")
+    if w and h:
+        ratio = w / h
+        if 0.8 < ratio < 1.3:
+            return True
+    return any(kw in url for kw in ("ggpht", "photo", "avatar"))
+
+
+def _is_banner(t: dict) -> bool:
+    w = t.get("width") or 0
+    h = t.get("height") or 1
+    url = t.get("url", "")
+    if w and h and (w / h) > 2.5:
+        return True
+    return "banner" in url.lower()

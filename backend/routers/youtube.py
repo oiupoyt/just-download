@@ -106,9 +106,20 @@ async def subtitles(req: SubtitleRequest, bg: BackgroundTasks):
 
 
 @router.post("/channel-art")
-async def channel_art(req: ChannelRequest):
+async def channel_art(req: ChannelRequest, bg: BackgroundTasks):
+    """
+    Returns JSON with download URLs for avatar and banner images.
+    Frontend fetches each URL separately to trigger downloads.
+    Response: {"assets": [{"type": "avatar", "url": "/files/..."}, ...]}
+    """
     try:
         assets = await download_channel_art(req.channel_url)
     except Exception as e:
         raise HTTPException(500, detail=str(e))
+
+    # schedule cleanup for each file
+    for asset in assets:
+        path = f"downloads/{asset['filename']}"
+        bg.add_task(_delete_later, path)
+
     return {"assets": assets}
