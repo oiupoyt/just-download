@@ -2,16 +2,17 @@
 Instagram service.
 
 Strategy:
-  - Posts/images:   instaloader (with session) → yt-dlp fallback
-  - Reels/videos:   yt-dlp (instaloader 403s on reels)
-  - Profile pics:   instaloader (uses username directly, no shortcode)
-  - Thumbnails:     yt-dlp
+  - Post/reel info:   yt-dlp first, instaloader fallback
+  - Post download:    yt-dlp first, instaloader fallback
+  - Reel download:    yt-dlp only (instaloader 403s on reels)
+  - Profile picture:  yt-dlp (avoids instaloader rate limits on Profile.from_username)
+  - Thumbnail:        yt-dlp
 
-Session setup (run once on the tablet):
+Session setup (run once on tablet, needed for instaloader fallback):
   python3 -c "
   import instaloader
   L = instaloader.Instaloader()
-  L.interactive_login('your_ig_username')
+  L.interactive_login('your_username')
   L.save_session_to_file('ig_session')
   print('saved')
   "
@@ -66,6 +67,37 @@ def _fmt_s(s) -> str:
     return f"{m}:{sec:02d}"
 
 
+def _download_image_url(url: str, dest: Path) -> Path:
+    import httpx
+    resp = httpx.get(url, follow_redirects=True, timeout=20)
+    resp.raise_for_status()
+    dest.write_bytes(resp.content)
+    return dest
+
+
+def _trim_video(src: Path, dest: Path, start: Optional[str], end: Optional[str]) -> Path:
+    import subprocess
+    cmd = ["ffmpeg", "-y"]
+    if start:
+        cmd += ["-ss", start]
+    cmd += ["-i", str(src)]
+    if end:
+        cmd += ["-to", end]
+    cmd += ["-c", "copy", str(dest)]
+    result = subprocess.run(cmd, capture_output=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg trim failed: {result.stderr.decode()[:200]}")
+    return dest
+
+
+def _first_media(directory: Path) -> Optional[Path]:
+    return next(
+        (f for f in sorted(directory.iterdir())
+         if f.suffix in (".mp4", ".jpg", ".jpeg", ".png")),
+        None,
+    )
+
+
 def _get_loader() -> instaloader.Instaloader:
     global _loader
     if _loader is not None:
@@ -103,42 +135,9 @@ def _get_loader() -> instaloader.Instaloader:
     return _loader
 
 
-def _download_image_url(url: str, dest: Path) -> Path:
-    import httpx
-    resp = httpx.get(url, follow_redirects=True, timeout=20)
-    resp.raise_for_status()
-    dest.write_bytes(resp.content)
-    return dest
-
-
-def _trim_video(src: Path, dest: Path, start: Optional[str], end: Optional[str]) -> Path:
-    import subprocess
-    cmd = ["ffmpeg", "-y"]
-    if start:
-        cmd += ["-ss", start]
-    cmd += ["-i", str(src)]
-    if end:
-        cmd += ["-to", end]
-    cmd += ["-c", "copy", str(dest)]
-    result = subprocess.run(cmd, capture_output=True, timeout=120)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg trim failed: {result.stderr.decode()[:200]}")
-    return dest
-
-
-def _first_media(directory: Path) -> Optional[Path]:
-    return next(
-        (f for f in sorted(directory.iterdir())
-         if f.suffix in (".mp4", ".jpg", ".jpeg", ".png")),
-        None,
-    )
-
-
-# ── post info (shortcode-based) ───────────────────────────────────────────────
+# ── post info ─────────────────────────────────────────────────────────────────
 
 async def fetch_ig_post_info(url: str) -> dict:
-    """Info for post / reel / tv URLs."""
-
     def _via_ytdlp():
         opts = {**_BASE_YDL, "skip_download": True}
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -175,12 +174,40 @@ async def fetch_ig_post_info(url: str) -> dict:
     return await _run(_via_instaloader)
 
 
-# ── profile info (username-based) ─────────────────────────────────────────────
+# ── profile info ──────────────────────────────────────────────────────────────
 
 async def fetch_ig_profile_info(username: str) -> dict:
-    """Info for profile pages — uses username directly, no shortcode."""
+    """
+    Fetch profile info using yt-dlp's Instagram user extractor.
+    This avoids instaloader's Profile.from_username() which gets
+    rate-limited and returns "does not exist" even for real accounts.
+    """
+    def _via_ytdlp():
+        # yt-dlp can extract Instagram user pages
+        profile_url = f"https://www.instagram.com/{username}/"
+        opts = {
+            **_BASE_YDL,
+            "skip_download": True,
+            "extract_flat":  True,
+            "playlist_items": "0",
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(profile_url, download=False)
 
-    def _fetch():
+        # yt-dlp returns uploader_url, thumbnail from profile pages
+        thumb = info.get("thumbnail") or (
+            info.get("thumbnails") or [{}]
+        )[-1].get("url")
+
+        return {
+            "type":      "profile",
+            "title":     f"@{username}",
+            "thumbnail": thumb,
+            "owner":     username,
+            "likes":     info.get("channel_follower_count") or 0,
+        }
+
+    def _via_instaloader():
         L       = _get_loader()
         profile = instaloader.Profile.from_username(L.context, username)
         try:
@@ -192,10 +219,15 @@ async def fetch_ig_profile_info(username: str) -> dict:
             "title":     f"@{profile.username}",
             "thumbnail": pic_url,
             "owner":     profile.username,
-            "likes":     profile.followers,   # repurpose likes field for follower count
+            "likes":     profile.followers,
         }
 
-    return await _run(_fetch)
+    try:
+        return await _run(_via_ytdlp)
+    except Exception:
+        pass
+    # instaloader as last resort
+    return await _run(_via_instaloader)
 
 
 # ── post download ─────────────────────────────────────────────────────────────
@@ -260,7 +292,7 @@ async def download_post(
     return await _run(_via_instaloader)
 
 
-# ── reel download (yt-dlp only) ───────────────────────────────────────────────
+# ── reel download ─────────────────────────────────────────────────────────────
 
 async def download_reel(
     url: str,
@@ -299,12 +331,39 @@ async def download_reel(
 
 async def download_profile(username: str) -> Tuple[str, str]:
     """
-    Downloads the profile picture for a given username.
-    username should already be clean (no @ prefix, no URL).
+    Downloads profile picture using yt-dlp's Instagram extractor,
+    falling back to instaloader if yt-dlp can't find a usable image URL.
     """
     uid = _uid()
 
-    def _dl():
+    def _via_ytdlp():
+        profile_url = f"https://www.instagram.com/{username}/"
+        opts = {
+            **_BASE_YDL,
+            "skip_download":  True,
+            "extract_flat":   True,
+            "playlist_items": "0",
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(profile_url, download=False)
+
+        # try thumbnail fields in order of preference
+        thumb = (
+            info.get("thumbnail")
+            or next(
+                (t.get("url") for t in reversed(info.get("thumbnails") or [])
+                 if t.get("url")),
+                None,
+            )
+        )
+        if not thumb:
+            raise ValueError("yt-dlp found no thumbnail for this profile")
+
+        path = DOWNLOAD_DIR / f"ig_pfp_{_safe(username)}_{uid}.jpg"
+        _download_image_url(thumb, path)
+        return str(path), f"{_safe(username)}_profile.jpg"
+
+    def _via_instaloader():
         L       = _get_loader()
         profile = instaloader.Profile.from_username(L.context, username)
         try:
@@ -315,7 +374,11 @@ async def download_profile(username: str) -> Tuple[str, str]:
         _download_image_url(pic_url, path)
         return str(path), f"{_safe(username)}_profile.jpg"
 
-    return await _run(_dl)
+    try:
+        return await _run(_via_ytdlp)
+    except Exception:
+        pass
+    return await _run(_via_instaloader)
 
 
 # ── thumbnail ─────────────────────────────────────────────────────────────────

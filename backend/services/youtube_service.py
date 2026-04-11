@@ -240,14 +240,15 @@ async def download_subtitles(url: str, lang: str = "en") -> Tuple[str, str]:
 
 async def download_channel_art(channel_url: str) -> List[dict]:
     """
-    Given a channel URL (youtube.com/@handle or youtube.com/channel/UCxxxxx),
-    downloads the avatar and banner as separate JPEG files.
+    Downloads avatar + banner for a YouTube channel as separate JPEGs.
 
-    Returns:
-      [
-        {"type": "avatar", "filename": "channelname_avatar.jpg", "url": "/files/..."},
-        {"type": "banner", "filename": "channelname_banner.jpg", "url": "/files/..."},
-      ]
+    Approach:
+      1. Use yt-dlp to get channel metadata (uploader, thumbnails list)
+      2. Parse thumbnails list — YouTube returns avatars (square, ggpht CDN)
+         and banners (wide ratio) as separate entries
+      3. Download each directly with httpx
+
+    Returns list of {"type", "filename", "url"} dicts.
     """
 
     def _dl():
@@ -255,38 +256,53 @@ async def download_channel_art(channel_url: str) -> List[dict]:
 
         uid = _uid()
 
-        # fetch channel metadata — extract_flat avoids fetching all videos
+        # fetch channel page metadata only — no video list needed
+        # DO NOT use extract_flat here, it causes yt-dlp to return
+        # video entries instead of channel metadata
         opts = {
             **_BASE_OPTS,
-            "skip_download": True,
-            "extract_flat":  True,
+            "skip_download":  True,
+            "extract_flat":   False,
+            "playlist_items": "0",   # fetch 0 videos — just channel info
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(channel_url, download=False)
 
-        channel_name = _safe(info.get("channel") or info.get("uploader") or "channel")
-        thumbnails   = info.get("thumbnails") or []
-        results      = []
+        channel_name = _safe(
+            info.get("channel")
+            or info.get("uploader")
+            or info.get("title")
+            or "channel"
+        )
+        thumbnails = info.get("thumbnails") or []
+        results    = []
+
+        print(f"[yt channel] found {len(thumbnails)} thumbnails for {channel_name}")
+        for t in thumbnails:
+            print(f"  w={t.get('width')} h={t.get('height')} url={str(t.get('url',''))[:80]}")
 
         # ── avatar ────────────────────────────────────────────────────────────
-        # YouTube channel avatars come from ggpht.com and are square
+        # YouTube avatar thumbnails:
+        #   - hosted on ggpht.com or lh3.googleusercontent.com
+        #   - square aspect ratio (width == height)
         avatar_url = None
+        avatar_candidates = [
+            t for t in thumbnails
+            if t.get("url") and _is_avatar_thumb(t)
+        ]
+        if avatar_candidates:
+            # pick highest resolution
+            best = max(
+                avatar_candidates,
+                key=lambda t: (t.get("width") or 0) * (t.get("height") or 0),
+            )
+            avatar_url = best["url"]
+            # for ggpht URLs, request a larger size by tweaking the size param
+            avatar_url = _upscale_ggpht(avatar_url, 800)
 
-        # first try thumbnails tagged as square / avatar-like
-        square = [t for t in thumbnails if _is_avatar(t)]
-        if square:
-            # highest resolution square thumbnail
-            avatar_url = max(square, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))["url"]
-
-        # fallback: any thumbnail from ggpht (Google's image CDN for avatars)
-        if not avatar_url:
-            ggpht = [t for t in thumbnails if "ggpht" in (t.get("url") or "")]
-            if ggpht:
-                avatar_url = ggpht[-1]["url"]
-
-        # last resort: channel thumbnail field
-        if not avatar_url:
-            avatar_url = info.get("thumbnail")
+        # fallback: channel's own thumbnail field
+        if not avatar_url and info.get("thumbnail"):
+            avatar_url = info["thumbnail"]
 
         if avatar_url:
             dest = DOWNLOAD_DIR / f"{channel_name}_avatar_{uid}.jpg"
@@ -297,17 +313,22 @@ async def download_channel_art(channel_url: str) -> List[dict]:
                     "filename": dest.name,
                     "url":      f"/files/{dest.name}",
                 })
+                print(f"[yt channel] avatar saved: {dest.name}")
             except Exception as e:
                 print(f"[yt channel] avatar download failed: {e}")
 
         # ── banner ────────────────────────────────────────────────────────────
+        # Banners are wide (ratio > 3:1) or explicitly keyed
         banner_url = info.get("header_image") or info.get("banner")
 
         if not banner_url:
-            # look for very wide thumbnails (banner aspect ratio)
-            wide = [t for t in thumbnails if _is_banner(t)]
-            if wide:
-                banner_url = max(wide, key=lambda t: t.get("width") or 0)["url"]
+            banner_candidates = [
+                t for t in thumbnails
+                if t.get("url") and _is_banner_thumb(t)
+            ]
+            if banner_candidates:
+                best = max(banner_candidates, key=lambda t: t.get("width") or 0)
+                banner_url = best["url"]
 
         if banner_url:
             dest = DOWNLOAD_DIR / f"{channel_name}_banner_{uid}.jpg"
@@ -318,13 +339,14 @@ async def download_channel_art(channel_url: str) -> List[dict]:
                     "filename": dest.name,
                     "url":      f"/files/{dest.name}",
                 })
+                print(f"[yt channel] banner saved: {dest.name}")
             except Exception as e:
                 print(f"[yt channel] banner download failed: {e}")
 
         if not results:
             raise ValueError(
-                "no channel art found — make sure you're using a channel URL "
-                "like youtube.com/@channelname or youtube.com/channel/UCxxxxxx"
+                "no channel art found — use a channel URL like "
+                "youtube.com/@channelname or youtube.com/channel/UCxxxxxx"
             )
 
         return results
@@ -332,19 +354,48 @@ async def download_channel_art(channel_url: str) -> List[dict]:
     return await _run(_dl)
 
 
-def _is_avatar(t: dict) -> bool:
+def _is_avatar_thumb(t: dict) -> bool:
+    """True if this thumbnail looks like a channel avatar (square, ggpht CDN)."""
+    url = t.get("url") or ""
     w   = t.get("width") or 0
     h   = t.get("height") or 1
-    url = t.get("url") or ""
-    if w and h and 0.8 < (w / h) < 1.3:
+
+    # ggpht / lh3.googleusercontent = Google's avatar CDN
+    if any(cdn in url for cdn in ("ggpht.com", "lh3.googleusercontent.com")):
         return True
-    return any(kw in url for kw in ("ggpht", "photo", "avatar"))
+
+    # square-ish and small-to-medium (avatars are usually ≤ 900px)
+    if w and h and 0.85 < (w / h) < 1.15 and w <= 900:
+        return True
+
+    return False
 
 
-def _is_banner(t: dict) -> bool:
+def _is_banner_thumb(t: dict) -> bool:
+    """True if this thumbnail looks like a channel banner (very wide)."""
+    url = t.get("url") or ""
     w   = t.get("width") or 0
     h   = t.get("height") or 1
-    url = t.get("url") or ""
-    if w and h and (w / h) > 2.5:
+
+    if "banner" in url.lower():
         return True
-    return "banner" in url.lower()
+
+    # banners are typically 2560×1440 or similar ultra-wide
+    if w and h and (w / h) > 3.0:
+        return True
+
+    return False
+
+
+def _upscale_ggpht(url: str, size: int) -> str:
+    """
+    ggpht URLs end with =s{size} or =s{size}-c.
+    Replace with a larger size for higher resolution avatars.
+    e.g. =s88-c-k  →  =s800-c-k
+    """
+    # match =sNNN optionally followed by other params
+    upscaled = re.sub(r"=s\d+", f"=s{size}", url)
+    if upscaled != url:
+        return upscaled
+    # if no size param found, just return original
+    return url
