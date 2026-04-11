@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
+from utils import clean_yt_url
 from services.youtube_service import (
     download_video,
     download_audio,
@@ -44,7 +45,7 @@ class SubtitleRequest(BaseModel):
 
 
 class ChannelRequest(BaseModel):
-    channel_url: str
+    channel_url: str   # youtube.com/@handle  or  youtube.com/channel/UCxxxxxx
 
 
 async def _delete_later(path: str, delay: int = 3600):
@@ -57,9 +58,10 @@ async def _delete_later(path: str, delay: int = 3600):
 
 @router.post("/video")
 async def video(req: VideoRequest, bg: BackgroundTasks):
+    url = clean_yt_url(req.url.strip())
     try:
         path, filename = await download_video(
-            url=req.url,
+            url=url,
             resolution=req.resolution,
             fmt=req.format,
             start_time=req.start_time,
@@ -73,12 +75,9 @@ async def video(req: VideoRequest, bg: BackgroundTasks):
 
 @router.post("/audio")
 async def audio(req: AudioRequest, bg: BackgroundTasks):
+    url = clean_yt_url(req.url.strip())
     try:
-        path, filename = await download_audio(
-            url=req.url,
-            quality=req.quality,
-            fmt=req.format,
-        )
+        path, filename = await download_audio(url=url, quality=req.quality, fmt=req.format)
     except Exception as e:
         raise HTTPException(500, detail=str(e))
     bg.add_task(_delete_later, path)
@@ -87,8 +86,9 @@ async def audio(req: AudioRequest, bg: BackgroundTasks):
 
 @router.post("/thumbnail")
 async def thumbnail(req: SimpleRequest, bg: BackgroundTasks):
+    url = clean_yt_url(req.url.strip())
     try:
-        path, filename = await download_thumbnail(req.url)
+        path, filename = await download_thumbnail(url)
     except Exception as e:
         raise HTTPException(500, detail=str(e))
     bg.add_task(_delete_later, path)
@@ -97,8 +97,9 @@ async def thumbnail(req: SimpleRequest, bg: BackgroundTasks):
 
 @router.post("/subtitles")
 async def subtitles(req: SubtitleRequest, bg: BackgroundTasks):
+    url = clean_yt_url(req.url.strip())
     try:
-        path, filename = await download_subtitles(req.url, req.lang)
+        path, filename = await download_subtitles(url, req.lang)
     except Exception as e:
         raise HTTPException(500, detail=str(e))
     bg.add_task(_delete_later, path)
@@ -108,18 +109,22 @@ async def subtitles(req: SubtitleRequest, bg: BackgroundTasks):
 @router.post("/channel-art")
 async def channel_art(req: ChannelRequest, bg: BackgroundTasks):
     """
-    Returns JSON with download URLs for avatar and banner images.
-    Frontend fetches each URL separately to trigger downloads.
-    Response: {"assets": [{"type": "avatar", "url": "/files/..."}, ...]}
+    Downloads avatar (JPG) and banner (JPG) for a YouTube channel.
+    Returns JSON — frontend opens each asset URL to trigger download.
+
+    {
+      "assets": [
+        {"type": "avatar", "filename": "...", "url": "/files/..."},
+        {"type": "banner", "filename": "...", "url": "/files/..."}
+      ]
+    }
     """
     try:
-        assets = await download_channel_art(req.channel_url)
+        assets = await download_channel_art(req.channel_url.strip())
     except Exception as e:
         raise HTTPException(500, detail=str(e))
 
-    # schedule cleanup for each file
     for asset in assets:
-        path = f"downloads/{asset['filename']}"
-        bg.add_task(_delete_later, path)
+        bg.add_task(_delete_later, f"downloads/{asset['filename']}")
 
     return {"assets": assets}
