@@ -5,3 +5,6 @@
  - channel avater broken rn
  
 justdownload.netlify.app
+
+selfhost tutorial comin soon and so will actual documentation lol
+
