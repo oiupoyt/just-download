@@ -157,7 +157,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;min
   </div>
 
   <div id="panel-yt" class="panel">
-    <div class="section-label">what do u want gng</div>
+    <div class="section-label">choose</div>
     <div class="options-grid cols3" style="margin-bottom:1.25rem">
       <div class="opt-card selected-yt" id="yt-video" onclick="selectOpt('yt','yt-video')">
         <span class="opt-icon">🎬</span><div class="opt-title">Video</div><div class="opt-desc">MP4 with audio</div>
@@ -176,7 +176,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;min
         <div class="opt-check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,4"/></svg></div>
       </div>
       <div class="opt-card" id="yt-channel" onclick="selectOpt('yt','yt-channel')">
-        <span class="opt-icon">👤</span><div class="opt-title">Channel art (not working rn nub)</div><div class="opt-desc">Avatar + banner</div>
+        <span class="opt-icon">👤</span><div class="opt-title">Channel art</div><div class="opt-desc">Avatar + banner</div>
         <div class="opt-check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,4"/></svg></div>
       </div>
     </div>
@@ -222,7 +222,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;min
   </div>
 
   <div id="panel-ig" class="panel">
-    <div class="section-label">what do you want nub</div>
+    <div class="section-label">choose</div>
     <div class="options-grid cols3" style="margin-bottom:1.25rem">
       <div class="opt-card selected-ig" id="ig-post" onclick="selectOpt('ig','ig-post')">
         <span class="opt-icon">📸</span><div class="opt-title">Post</div><div class="opt-desc">Image or video</div>
@@ -233,7 +233,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;min
         <div class="opt-check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,4"/></svg></div>
       </div>
       <div class="opt-card" id="ig-profile" onclick="selectOpt('ig','ig-profile')">
-        <span class="opt-icon">👤</span><div class="opt-title">Profile (not working bruh)</div><div class="opt-desc">Avatar</div>
+        <span class="opt-icon">👤</span><div class="opt-title">Profile pic</div><div class="opt-desc">Avatar JPG</div>
         <div class="opt-check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,4"/></svg></div>
       </div>
       <div class="opt-card" id="ig-thumb" onclick="selectOpt('ig','ig-thumb')">
@@ -282,11 +282,33 @@ let activeOpts = { yt: 'yt-video', ig: 'ig-post' };
 let downloading = false;
 let downloadHistory = [];
 
+// ── URL helpers ───────────────────────────────────────────────────────────────
+
+function cleanYtUrl(url) {
+  // strip playlist/radio params — keep only the video id
+  const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+  if (m) return `https://www.youtube.com/watch?v=${m[1]}`;
+  const s = url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  if (s) return `https://youtu.be/${s[1]}`;
+  return url; // channel URLs etc pass through unchanged
+}
+
+function extractIgUsername(raw) {
+  // accepts: full URL, @username, or bare username
+  if (raw.includes('instagram.com')) {
+    const path = raw.replace(/https?:\/\/(www\.)?instagram\.com\/?/, '').replace(/^@/, '');
+    return path.split('/')[0].split('?')[0].trim();
+  }
+  return raw.replace(/^@/, '').trim();
+}
+
 function detectPlatform(url) {
   if (/youtube\.com|youtu\.be/.test(url)) return 'yt';
   if (/instagram\.com|instagr\.am/.test(url)) return 'ig';
   return null;
 }
+
+// ── preview ───────────────────────────────────────────────────────────────────
 
 async function handleUrl() {
   const url = document.getElementById('urlInput').value.trim();
@@ -332,7 +354,7 @@ function renderPreview(data, platform) {
   const pills = [];
   if (data.duration_str) pills.push(`<span class="meta-pill">${data.duration_str}</span>`);
   if (data.view_count)   pills.push(`<span class="meta-pill">${fmtNum(data.view_count)} views</span>`);
-  if (data.likes)        pills.push(`<span class="meta-pill">${fmtNum(data.likes)} likes</span>`);
+  if (data.likes)        pills.push(`<span class="meta-pill">${fmtNum(data.likes)} ${data.type==='profile'?'followers':'likes'}</span>`);
   if (data.uploader)     pills.push(`<span class="meta-pill" style="color:${color}">${data.uploader}</span>`);
   if (data.owner)        pills.push(`<span class="meta-pill" style="color:${color}">@${data.owner}</span>`);
   document.getElementById('previewMeta').innerHTML = pills.join('');
@@ -345,6 +367,8 @@ function fmtNum(n) {
   if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
   return String(n);
 }
+
+// ── platform / options ────────────────────────────────────────────────────────
 
 function switchPlatform(p) {
   activePlatform = p;
@@ -372,6 +396,8 @@ function setTrim(mode) {
   document.getElementById('trim-inputs').style.display = mode==='custom' ? 'flex' : 'none';
 }
 
+// ── download ──────────────────────────────────────────────────────────────────
+
 function startDownload() {
   if (downloading) return;
   if (!activePlatform) { showToast('pick a platform first', '#e24b4a'); return; }
@@ -385,8 +411,8 @@ function quickDownload() {
 }
 
 async function runDownload(quick) {
-  const url = document.getElementById('urlInput').value.trim();
-  if (!url) { showToast('paste a url first lol', '#e24b4a'); return; }
+  const raw = document.getElementById('urlInput').value.trim();
+  if (!raw) { showToast('paste a url first lol', '#e24b4a'); return; }
   downloading = true;
   setButtons(false);
 
@@ -410,8 +436,57 @@ async function runDownload(quick) {
   const statInterval = setInterval(() => { if (si < statuses.length) stat.textContent = statuses[si++]; }, 3000);
 
   try {
+    const opt = activeOpts[activePlatform];
+
+    // ── channel art: returns JSON with multiple image URLs, not a blob ────────
+    if (activePlatform === 'yt' && opt === 'yt-channel') {
+      lbl.textContent = 'downloading channel art...';
+      const res = await fetch(`${API}/api/youtube/channel-art`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_url: raw })
+      });
+      clearInterval(fakeInterval); clearInterval(statInterval);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      bar.style.width = '100%'; pct.textContent = '100%'; stat.textContent = 'opening files...';
+      // trigger a download for each image separately
+      for (const asset of data.assets) {
+        const a = document.createElement('a');
+        a.href = `${API}${asset.url}`;
+        a.download = asset.filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        await new Promise(r => setTimeout(r, 600)); // stagger so browser doesn't block second download
+      }
+      showToast(`got ${data.assets.length} file(s) 👌`, '#1db954');
+      addHistory(`channel art (${data.assets.length} files)`);
+      setTimeout(() => { wrap.className='progress-wrap'; bar.style.width='0%'; }, 1500);
+      return;
+    }
+
+    // ── instagram profile: extract username, send as {username} not {url} ────
+    if (activePlatform === 'ig' && opt === 'ig-profile') {
+      lbl.textContent = 'downloading profile pic...';
+      const username = extractIgUsername(raw);
+      const res = await fetch(`${API}/api/instagram/profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      clearInterval(fakeInterval); clearInterval(statInterval);
+      if (!res.ok) throw new Error(await res.text());
+      bar.style.width = '95%'; pct.textContent = '95%'; stat.textContent = 'saving file...';
+      await triggerBlobDownload(res, `${username}_profile.jpg`);
+      bar.style.width = '100%'; pct.textContent = '100%'; stat.textContent = 'done lol';
+      showToast('got it 👌', '#1db954');
+      addHistory(`${username}_profile.jpg`);
+      setTimeout(() => { wrap.className='progress-wrap'; bar.style.width='0%'; }, 1500);
+      return;
+    }
+
+    // ── standard single-file download ─────────────────────────────────────────
     const endpoint = getEndpoint(quick);
-    const body = buildBody(url, quick);
+    const body     = buildBody(raw, quick);
     lbl.textContent = 'downloading — ' + (activePlatform==='yt'?'YouTube':'Instagram');
 
     const res = await fetch(`${API}${endpoint}`, {
@@ -419,25 +494,16 @@ async function runDownload(quick) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-
     clearInterval(fakeInterval); clearInterval(statInterval);
     if (!res.ok) throw new Error(await res.text());
 
     bar.style.width = '95%'; pct.textContent = '95%'; stat.textContent = 'saving file...';
-    const blob = await res.blob();
-    const disposition = res.headers.get('content-disposition') || '';
-    const filename = disposition.split('filename=')[1]?.replace(/"/g,'') || guessFilename();
-
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-
+    const filename = await triggerBlobDownload(res, guessFilename());
     bar.style.width = '100%'; pct.textContent = '100%'; stat.textContent = 'done lol';
     showToast('got it 👌', '#1db954');
     addHistory(filename);
     setTimeout(() => { wrap.className='progress-wrap'; bar.style.width='0%'; }, 2000);
+
   } catch(e) {
     clearInterval(fakeInterval); clearInterval(statInterval);
     wrap.className = 'progress-wrap'; bar.style.width = '0%';
@@ -447,28 +513,39 @@ async function runDownload(quick) {
   }
 }
 
+async function triggerBlobDownload(res, fallbackName) {
+  const disposition = res.headers.get('content-disposition') || '';
+  const filename = disposition.split('filename=')[1]?.replace(/"/g,'') || fallbackName;
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  return filename;
+}
+
 function getEndpoint(quick) {
   if (activePlatform === 'yt') {
     if (quick) return '/api/youtube/video';
     const opt = activeOpts.yt;
-    if (opt==='yt-video')   return '/api/youtube/video';
-    if (opt==='yt-audio')   return '/api/youtube/audio';
-    if (opt==='yt-thumb')   return '/api/youtube/thumbnail';
-    if (opt==='yt-subs')    return '/api/youtube/subtitles';
-    if (opt==='yt-channel') return '/api/youtube/channel-art';
+    if (opt==='yt-video') return '/api/youtube/video';
+    if (opt==='yt-audio') return '/api/youtube/audio';
+    if (opt==='yt-thumb') return '/api/youtube/thumbnail';
+    if (opt==='yt-subs')  return '/api/youtube/subtitles';
   }
   if (activePlatform === 'ig') {
     const opt = activeOpts.ig;
-    if (opt==='ig-post')    return '/api/instagram/post';
-    if (opt==='ig-reel')    return '/api/instagram/reel';
-    if (opt==='ig-profile') return '/api/instagram/profile';
-    if (opt==='ig-thumb')   return '/api/instagram/thumbnail';
+    if (opt==='ig-post')  return '/api/instagram/post';
+    if (opt==='ig-reel')  return '/api/instagram/reel';
+    if (opt==='ig-thumb') return '/api/instagram/thumbnail';
   }
   return '/api/youtube/video';
 }
 
-function buildBody(url, quick) {
+function buildBody(raw, quick) {
   if (activePlatform === 'yt') {
+    const url = cleanYtUrl(raw);
     if (quick) return { url, resolution: 'best', format: 'mp4' };
     const opt = activeOpts.yt;
     if (opt==='yt-video') {
@@ -478,22 +555,17 @@ function buildBody(url, quick) {
       const end   = document.getElementById('endTime').value || null;
       return { url, resolution: res, format: fmt, start_time: start, end_time: end };
     }
-    if (opt==='yt-audio')   return { url, quality: '192', format: 'mp3' };
-    if (opt==='yt-subs')    return { url, lang: 'en' };
-    if (opt==='yt-channel') return { channel_url: url };
+    if (opt==='yt-audio') return { url, quality: '192', format: 'mp3' };
+    if (opt==='yt-subs')  return { url, lang: 'en' };
     return { url };
   }
   if (activePlatform === 'ig') {
-    const opt = activeOpts.ig;
+    const url = raw.split('?')[0].replace(/\/$/, '');
     const fmt = document.querySelector('#ig-fmt-toggle .on')?.textContent.toLowerCase() || 'mp4';
-    if (opt==='ig-post' || opt==='ig-reel') return { url, format: fmt };
-    if (opt==='ig-profile') {
-      const m = url.match(/instagram\.com\/([^/?]+)/);
-      return { username: m ? m[1] : url };
-    }
+    if (activeOpts.ig==='ig-post' || activeOpts.ig==='ig-reel') return { url, format: fmt };
     return { url };
   }
-  return { url };
+  return { url: raw };
 }
 
 function guessFilename() {
@@ -514,7 +586,7 @@ function addHistory(filename) {
 }
 
 function renderHistory() {
-  const sec = document.getElementById('historySection');
+  const sec  = document.getElementById('historySection');
   const list = document.getElementById('historyList');
   sec.style.display = downloadHistory.length ? 'block' : 'none';
   list.innerHTML = downloadHistory.slice(0,6).map(item=>`
