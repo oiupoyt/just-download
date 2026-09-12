@@ -2,7 +2,7 @@
 
 yeah
 
-🌐 **Website**: [jd.oiupoyt.space](https://jd.oiupoyt.space)
+↗ [jd.oiupoyt.space](https://jd.oiupoyt.space)
 
 ## features
 
