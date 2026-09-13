@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::config::AppConfig;
 use crate::error::AppError;
 use crate::services::instagram::InstagramService;
-use crate::utils::{clean_ig_url, extract_ig_username};
+use crate::utils::{clean_ig_url, extract_ig_username, is_valid_ig_username, is_valid_instagram_url, is_valid_time_format};
 
 #[derive(Deserialize)]
 pub struct PostRequest {
@@ -35,11 +35,29 @@ pub async fn post(
     State(config): State<AppConfig>,
     Json(req): Json<PostRequest>,
 ) -> Result<Response, AppError> {
+    let raw_url = req.url.trim();
+    if !is_valid_instagram_url(raw_url) {
+        return Err(AppError::BadRequest("Invalid or unsupported Instagram URL".to_string()));
+    }
+    if req.format != "mp4" {
+        return Err(AppError::BadRequest("Invalid format for Instagram video — only mp4 is supported".to_string()));
+    }
+    if let Some(ref st) = req.start_time {
+        if !is_valid_time_format(st) {
+            return Err(AppError::BadRequest("Invalid start time format".to_string()));
+        }
+    }
+    if let Some(ref et) = req.end_time {
+        if !is_valid_time_format(et) {
+            return Err(AppError::BadRequest("Invalid end time format".to_string()));
+        }
+    }
+
     let _permit = config.semaphore.acquire().await.map_err(|_| {
         AppError::Internal("Server busy, please retry shortly".to_string())
     })?;
 
-    let url = clean_ig_url(req.url.trim());
+    let url = clean_ig_url(raw_url);
     let (path, filename) = InstagramService::download_post(
         &config.ytdlp_bin,
         &config.download_dir,
@@ -57,11 +75,26 @@ pub async fn reel(
     State(config): State<AppConfig>,
     Json(req): Json<PostRequest>,
 ) -> Result<Response, AppError> {
+    let raw_url = req.url.trim();
+    if !is_valid_instagram_url(raw_url) {
+        return Err(AppError::BadRequest("Invalid or unsupported Instagram URL".to_string()));
+    }
+    if let Some(ref st) = req.start_time {
+        if !is_valid_time_format(st) {
+            return Err(AppError::BadRequest("Invalid start time format".to_string()));
+        }
+    }
+    if let Some(ref et) = req.end_time {
+        if !is_valid_time_format(et) {
+            return Err(AppError::BadRequest("Invalid end time format".to_string()));
+        }
+    }
+
     let _permit = config.semaphore.acquire().await.map_err(|_| {
         AppError::Internal("Server busy, please retry shortly".to_string())
     })?;
 
-    let url = clean_ig_url(req.url.trim());
+    let url = clean_ig_url(raw_url);
     let (path, filename) = InstagramService::download_reel(
         &config.ytdlp_bin,
         &config.download_dir,
@@ -78,10 +111,6 @@ pub async fn profile(
     State(config): State<AppConfig>,
     Json(req): Json<ProfileRequest>,
 ) -> Result<Response, AppError> {
-    let _permit = config.semaphore.acquire().await.map_err(|_| {
-        AppError::Internal("Server busy, please retry shortly".to_string())
-    })?;
-
     let raw = req.username.trim();
     let username = if raw.contains("instagram.com") {
         extract_ig_username(raw).map_err(|e| AppError::BadRequest(e))?
@@ -89,9 +118,13 @@ pub async fn profile(
         raw.trim_start_matches('@').to_string()
     };
 
-    if username.is_empty() {
-        return Err(AppError::BadRequest("no username provided".to_string()));
+    if username.is_empty() || !is_valid_ig_username(&username) {
+        return Err(AppError::BadRequest("Invalid Instagram username provided".to_string()));
     }
+
+    let _permit = config.semaphore.acquire().await.map_err(|_| {
+        AppError::Internal("Server busy, please retry shortly".to_string())
+    })?;
 
     let (path, filename) = InstagramService::download_profile(
         &config.ytdlp_bin,
@@ -107,11 +140,16 @@ pub async fn thumbnail(
     State(config): State<AppConfig>,
     Json(req): Json<SimpleRequest>,
 ) -> Result<Response, AppError> {
+    let raw_url = req.url.trim();
+    if !is_valid_instagram_url(raw_url) {
+        return Err(AppError::BadRequest("Invalid or unsupported Instagram URL".to_string()));
+    }
+
     let _permit = config.semaphore.acquire().await.map_err(|_| {
         AppError::Internal("Server busy, please retry shortly".to_string())
     })?;
 
-    let url = clean_ig_url(req.url.trim());
+    let url = clean_ig_url(raw_url);
     let (path, filename) = InstagramService::download_thumbnail(
         &config.ytdlp_bin,
         &config.download_dir,

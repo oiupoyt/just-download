@@ -1,12 +1,30 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-.env
 .venv/
 venv/
 ENV/
-*.log
-.DS_Store
+
+# Rust
 target/
+Cargo.lock.bak
+
+# Downloads & runtime artifacts
 downloads/
 yt-dlp
+*.log
+*.pid
+
+# Credentials, secrets, sessions
+.env
+.env.*
+ig_session*
+*.pem
+*.key
+*.crt
+
+# OS & Editor
+.DS_Store
+.idea/
+.vscode/

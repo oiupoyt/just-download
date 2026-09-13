@@ -119,23 +119,25 @@ impl YouTubeService {
         let start_owned;
         let end_owned;
         if let Some(st) = start_time {
-            start_owned = format!("*{}", st);
-            args.push("--download-sections");
-            args.push(&start_owned);
+            if crate::utils::is_valid_time_format(st) {
+                start_owned = format!("*{}", st);
+                args.push("--download-sections");
+                args.push(&start_owned);
+            }
         } else if let Some(et) = end_time {
-            end_owned = format!("*-{}", et);
-            args.push("--download-sections");
-            args.push(&end_owned);
+            if crate::utils::is_valid_time_format(et) {
+                end_owned = format!("*-{}", et);
+                args.push("--download-sections");
+                args.push(&end_owned);
+            }
         }
 
-        args.push(url);
-
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound("Output video file not found".to_string()))?;
 
-        // Extract video title
+        // Extract video title safely
         let title = match YtDlp::dump_json(bin, url).await {
             Ok(json) => safe_filename(json.get("title").and_then(|v| v.as_str()).unwrap_or("video")),
             Err(_) => "video".to_string(),
@@ -162,6 +164,7 @@ impl YouTubeService {
             "opus" => "opus",
             "flac" => "flac",
             "m4a" => "m4a",
+            "wav" => "wav",
             _ => "mp3",
         };
 
@@ -170,10 +173,9 @@ impl YouTubeService {
             "--audio-format", codec,
             "--audio-quality", quality,
             "-o", &out_tmpl,
-            url,
         ];
 
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound("Audio file not found".to_string()))?;
@@ -202,10 +204,9 @@ impl YouTubeService {
             "--skip-download",
             "--write-thumbnail",
             "-o", &out_tmpl,
-            url,
         ];
 
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound("Thumbnail file not found".to_string()))?;
@@ -238,10 +239,9 @@ impl YouTubeService {
             "--sub-lang", lang,
             "--sub-format", "srt",
             "-o", &out_tmpl,
-            url,
         ];
 
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound(format!("No subtitles found for lang={}", lang)))?;
@@ -289,16 +289,19 @@ impl YouTubeService {
             }
 
             if let Some((_, best_avatar_url)) = avatar_candidates.into_iter().max_by_key(|c| c.0) {
-                let filename = format!("{}_avatar_{}.jpg", channel_name, uid);
-                let dest = download_dir.join(&filename);
-                if let Ok(resp) = client.get(best_avatar_url).send().await {
-                    if let Ok(bytes) = resp.bytes().await {
-                        let _ = tokio::fs::write(&dest, bytes).await;
-                        assets.push(ChannelAsset {
-                            asset_type: "avatar".to_string(),
-                            filename: filename.clone(),
-                            url: format!("/files/{}", filename),
-                        });
+                // Ensure avatar URL is valid safe HTTPS URL
+                if let Ok(parsed_url) = crate::utils::parse_safe_url(best_avatar_url) {
+                    let filename = format!("{}_avatar_{}.jpg", channel_name, uid);
+                    let dest = download_dir.join(&filename);
+                    if let Ok(resp) = client.get(parsed_url).send().await {
+                        if let Ok(bytes) = resp.bytes().await {
+                            let _ = tokio::fs::write(&dest, bytes).await;
+                            assets.push(ChannelAsset {
+                                asset_type: "avatar".to_string(),
+                                filename: filename.clone(),
+                                url: format!("/files/{}", filename),
+                            });
+                        }
                     }
                 }
             }
@@ -316,16 +319,18 @@ impl YouTubeService {
             }
 
             if let Some((_, best_banner_url)) = banner_candidates.into_iter().max_by_key(|c| c.0) {
-                let filename = format!("{}_banner_{}.jpg", channel_name, uid);
-                let dest = download_dir.join(&filename);
-                if let Ok(resp) = client.get(best_banner_url).send().await {
-                    if let Ok(bytes) = resp.bytes().await {
-                        let _ = tokio::fs::write(&dest, bytes).await;
-                        assets.push(ChannelAsset {
-                            asset_type: "banner".to_string(),
-                            filename: filename.clone(),
-                            url: format!("/files/{}", filename),
-                        });
+                if let Ok(parsed_url) = crate::utils::parse_safe_url(best_banner_url) {
+                    let filename = format!("{}_banner_{}.jpg", channel_name, uid);
+                    let dest = download_dir.join(&filename);
+                    if let Ok(resp) = client.get(parsed_url).send().await {
+                        if let Ok(bytes) = resp.bytes().await {
+                            let _ = tokio::fs::write(&dest, bytes).await;
+                            assets.push(ChannelAsset {
+                                asset_type: "banner".to_string(),
+                                filename: filename.clone(),
+                                url: format!("/files/{}", filename),
+                            });
+                        }
                     }
                 }
             }

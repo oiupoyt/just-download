@@ -1051,15 +1051,22 @@
     function renderPreview(data, platform) {
       document.getElementById('previewCard').classList.add('show');
       const thumbEl = document.getElementById('previewThumb');
-      if (data.thumbnail) thumbEl.innerHTML = `<img src="${data.thumbnail}" alt="" onerror="this.style.display='none'"/>`;
+      thumbEl.innerHTML = '';
+      if (data.thumbnail && typeof data.thumbnail === 'string' && (data.thumbnail.startsWith('http://') || data.thumbnail.startsWith('https://'))) {
+        const img = document.createElement('img');
+        img.src = data.thumbnail;
+        img.alt = '';
+        img.onerror = () => { img.style.display = 'none'; };
+        thumbEl.appendChild(img);
+      }
       document.getElementById('previewTitle').textContent = data.title || data.owner || '—';
       const color = platform === 'yt' ? 'var(--yt)' : 'var(--ig)';
       const pills = [];
-      if (data.duration_str) pills.push(`<span class="meta-pill">${data.duration_str}</span>`);
-      if (data.view_count)   pills.push(`<span class="meta-pill">${fmtNum(data.view_count)} views</span>`);
-      if (data.likes)        pills.push(`<span class="meta-pill">${fmtNum(data.likes)} ${data.type==='profile'?'followers':'likes'}</span>`);
-      if (data.uploader)     pills.push(`<span class="meta-pill" style="color:${color}">${data.uploader}</span>`);
-      if (data.owner)        pills.push(`<span class="meta-pill" style="color:${color}">@${data.owner}</span>`);
+      if (data.duration_str) pills.push(`<span class="meta-pill">${escapeHtml(data.duration_str)}</span>`);
+      if (data.view_count)   pills.push(`<span class="meta-pill">${escapeHtml(fmtNum(data.view_count))} views</span>`);
+      if (data.likes)        pills.push(`<span class="meta-pill">${escapeHtml(fmtNum(data.likes))} ${data.type==='profile'?'followers':'likes'}</span>`);
+      if (data.uploader)     pills.push(`<span class="meta-pill" style="color:${color}">${escapeHtml(data.uploader)}</span>`);
+      if (data.owner)        pills.push(`<span class="meta-pill" style="color:${color}">@${escapeHtml(data.owner)}</span>`);
       document.getElementById('previewMeta').innerHTML = pills.join('');
       const res = data.available_resolutions || [];
       document.getElementById('previewQuality').textContent = res.length ? `// max: ${res[0]}p available` : '';

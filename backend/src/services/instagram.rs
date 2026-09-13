@@ -89,10 +89,9 @@ impl InstagramService {
             "-f", "bestvideo+bestaudio/best",
             "--merge-output-format", fmt,
             "-o", &out_tmpl,
-            url,
         ];
 
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let mut final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound("Instagram post file not found".to_string()))?;
@@ -124,10 +123,9 @@ impl InstagramService {
             "-f", "bestvideo+bestaudio/best",
             "--merge-output-format", "mp4",
             "-o", &out_tmpl,
-            url,
         ];
 
-        YtDlp::execute(bin, &args).await?;
+        YtDlp::execute(bin, &args, url).await?;
 
         let mut final_file = YtDlp::find_file_with_prefix(download_dir, &out_prefix)
             .ok_or_else(|| AppError::NotFound("Instagram reel file not found".to_string()))?;
@@ -157,12 +155,15 @@ impl InstagramService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::NotFound("No thumbnail found for Instagram post".to_string()))?;
 
+        let parsed_url = crate::utils::parse_safe_url(thumb_url)
+            .map_err(|e| AppError::BadRequest(format!("Invalid thumbnail URL: {}", e)))?;
+
         let filename = format!("ig_thumb_{}.jpg", uid);
         let dest = download_dir.join(&filename);
 
         let client = reqwest::Client::new();
         let bytes = client
-            .get(thumb_url)
+            .get(parsed_url)
             .send()
             .await
             .map_err(|e| AppError::Internal(format!("Failed to fetch thumbnail: {}", e)))?
@@ -189,13 +190,16 @@ impl InstagramService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::NotFound(format!("Could not find profile picture for @{}", username)))?;
 
+        let parsed_url = crate::utils::parse_safe_url(thumb_url)
+            .map_err(|e| AppError::BadRequest(format!("Invalid profile picture URL: {}", e)))?;
+
         let safe_user = safe_filename(username);
         let filename = format!("{}_profile.jpg", safe_user);
         let dest = download_dir.join(format!("ig_pfp_{}_{}.jpg", safe_user, uid));
 
         let client = reqwest::Client::new();
         let bytes = client
-            .get(thumb_url)
+            .get(parsed_url)
             .send()
             .await
             .map_err(|e| AppError::Internal(format!("Failed to fetch profile picture: {}", e)))?

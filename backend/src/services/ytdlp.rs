@@ -24,6 +24,8 @@ impl YtDlp {
             cmd.arg("--js-runtimes").arg("node");
         }
 
+        // Use "--" delimiter to guarantee the URL is never parsed as a CLI flag
+        cmd.arg("--");
         cmd.arg(url);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -46,8 +48,8 @@ impl YtDlp {
         Ok(json_val)
     }
 
-    /// Runs yt-dlp with custom arguments
-    pub async fn execute(bin: &str, args: &[&str]) -> Result<(), AppError> {
+    /// Runs yt-dlp with custom arguments and a target URL
+    pub async fn execute(bin: &str, args: &[&str], url: &str) -> Result<(), AppError> {
         let mut cmd = Command::new(bin);
         cmd.args(args);
         cmd.arg("--no-warnings").arg("--no-playlist");
@@ -56,9 +58,13 @@ impl YtDlp {
             cmd.arg("--js-runtimes").arg("node");
         }
 
+        // Use "--" delimiter to guarantee the URL is never parsed as a CLI flag
+        cmd.arg("--");
+        cmd.arg(url);
+
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        info!("Executing yt-dlp with {} args", args.len());
+        info!("Executing yt-dlp with {} flags against target", args.len());
         let output = cmd.output().await.map_err(|e| {
             AppError::Internal(format!("Failed to run yt-dlp: {}", e))
         })?;
@@ -86,12 +92,16 @@ impl YtDlp {
         cmd.arg("-y");
 
         if let Some(start) = start_time {
-            cmd.arg("-ss").arg(start);
+            if crate::utils::is_valid_time_format(start) {
+                cmd.arg("-ss").arg(start);
+            }
         }
         cmd.arg("-i").arg(src);
 
         if let Some(end) = end_time {
-            cmd.arg("-to").arg(end);
+            if crate::utils::is_valid_time_format(end) {
+                cmd.arg("-to").arg(end);
+            }
         }
         cmd.arg("-c").arg("copy").arg(dest);
 

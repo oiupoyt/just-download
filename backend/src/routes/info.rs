@@ -1,22 +1,16 @@
 use axum::extract::State;
 use axum::Json;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::LazyLock;
 
 use crate::config::AppConfig;
 use crate::error::AppError;
 use crate::services::instagram::InstagramService;
 use crate::services::youtube::YouTubeService;
-use crate::utils::{clean_ig_url, clean_yt_url, extract_ig_username, is_ig_profile_url};
-
-static YT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(youtube\.com|youtu\.be)").expect("valid regex")
-});
-static IG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(instagram\.com|instagr\.am)").expect("valid regex")
-});
+use crate::utils::{
+    clean_ig_url, clean_yt_url, extract_ig_username, is_ig_profile_url, is_valid_instagram_url,
+    is_valid_youtube_url,
+};
 
 #[derive(Deserialize)]
 pub struct InfoRequest {
@@ -30,9 +24,10 @@ pub struct DetectResponse {
 }
 
 pub fn detect_platform(url: &str) -> &'static str {
-    if YT_RE.is_match(url) {
+    let trimmed = url.trim();
+    if is_valid_youtube_url(trimmed) {
         "youtube"
-    } else if IG_RE.is_match(url) {
+    } else if is_valid_instagram_url(trimmed) {
         "instagram"
     } else {
         "unknown"
@@ -43,7 +38,7 @@ pub async fn detect(Json(req): Json<InfoRequest>) -> Result<Json<DetectResponse>
     let platform = detect_platform(&req.url);
     if platform == "unknown" {
         return Err(AppError::BadRequest(
-            "could not detect platform from that url".to_string(),
+            "Unsupported or invalid URL — only YouTube and Instagram are supported".to_string(),
         ));
     }
     Ok(Json(DetectResponse {
@@ -79,7 +74,7 @@ pub async fn preview(
         }
         _ => {
             return Err(AppError::BadRequest(
-                "unsupported platform — only YouTube and Instagram are supported".to_string(),
+                "Unsupported or invalid URL — only YouTube and Instagram are supported".to_string(),
             ));
         }
     };

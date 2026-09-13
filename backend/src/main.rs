@@ -64,6 +64,19 @@ async fn main() {
     // Static file serving for /files/*
     let serve_dir = ServeDir::new(&config.download_dir);
 
+    let cors = CorsLayer::new()
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_origin(tower_http::cors::Any)
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+            axum::http::header::AUTHORIZATION,
+        ]);
+
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
@@ -71,7 +84,8 @@ async fn main() {
         .nest("/api/youtube", yt_routes)
         .nest("/api/instagram", ig_routes)
         .nest_service("/files", serve_dir)
-        .layer(CorsLayer::permissive())
+        .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+        .layer(cors)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(config.clone());
