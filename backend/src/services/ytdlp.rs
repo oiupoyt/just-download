@@ -7,9 +7,14 @@ use tracing::{error, info};
 pub struct YtDlp;
 
 impl YtDlp {
-    /// Detects if node runtime exists for yt-dlp javascript engine
-    fn has_node() -> bool {
-        which::which("node").is_ok()
+    /// Detects and configures node runtime for yt-dlp javascript engine
+    fn setup_js_runtime(cmd: &mut Command) {
+        if which::which("node").is_ok() {
+            cmd.arg("--js-runtimes").arg("node");
+        } else if std::path::Path::new("/data/data/com.termux/files/usr/bin/node").exists() {
+            cmd.arg("--js-runtimes")
+                .arg("node:/data/data/com.termux/files/usr/bin/node");
+        }
     }
 
     /// Spawns yt-dlp and extracts JSON metadata
@@ -18,11 +23,11 @@ impl YtDlp {
         cmd.arg("--dump-json")
             .arg("--skip-download")
             .arg("--no-warnings")
-            .arg("--no-playlist");
+            .arg("--no-playlist")
+            .arg("--extractor-args")
+            .arg("youtube:player_client=tv,android,mweb");
 
-        if Self::has_node() {
-            cmd.arg("--js-runtimes").arg("node");
-        }
+        Self::setup_js_runtime(&mut cmd);
 
         // Use "--" delimiter to guarantee the URL is never parsed as a CLI flag
         cmd.arg("--");
@@ -36,10 +41,20 @@ impl YtDlp {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("yt-dlp error: {}", stderr);
-            return Err(AppError::Internal(format!(
-                "yt-dlp failed: {}",
-                stderr.lines().next().unwrap_or("Unknown error")
-            )));
+            let first_line = stderr
+                .lines()
+                .find(|l| l.contains("ERROR:"))
+                .unwrap_or_else(|| stderr.lines().next().unwrap_or("Unknown error"));
+
+            let friendly_msg = if stderr.contains("Instagram") && stderr.contains("empty media") {
+                "Instagram restricted this media. Ensure the post is public or try again later.".to_string()
+            } else if stderr.contains("not a bot") {
+                "YouTube verification challenge encountered. Please retry shortly.".to_string()
+            } else {
+                format!("yt-dlp error: {}", first_line)
+            };
+
+            return Err(AppError::Internal(friendly_msg));
         }
 
         let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -52,11 +67,12 @@ impl YtDlp {
     pub async fn execute(bin: &str, args: &[&str], url: &str) -> Result<(), AppError> {
         let mut cmd = Command::new(bin);
         cmd.args(args);
-        cmd.arg("--no-warnings").arg("--no-playlist");
+        cmd.arg("--no-warnings")
+            .arg("--no-playlist")
+            .arg("--extractor-args")
+            .arg("youtube:player_client=tv,android,mweb");
 
-        if Self::has_node() {
-            cmd.arg("--js-runtimes").arg("node");
-        }
+        Self::setup_js_runtime(&mut cmd);
 
         // Use "--" delimiter to guarantee the URL is never parsed as a CLI flag
         cmd.arg("--");
@@ -72,10 +88,20 @@ impl YtDlp {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("yt-dlp execution failed: {}", stderr);
-            return Err(AppError::Internal(format!(
-                "Download failed: {}",
-                stderr.lines().last().unwrap_or("yt-dlp error")
-            )));
+            let first_line = stderr
+                .lines()
+                .find(|l| l.contains("ERROR:"))
+                .unwrap_or_else(|| stderr.lines().last().unwrap_or("Download failed"));
+
+            let friendly_msg = if stderr.contains("Instagram") && stderr.contains("empty media") {
+                "Instagram restricted this media. Ensure the post is public or try again later.".to_string()
+            } else if stderr.contains("not a bot") {
+                "YouTube verification challenge encountered. Please retry shortly.".to_string()
+            } else {
+                format!("Download error: {}", first_line)
+            };
+
+            return Err(AppError::Internal(friendly_msg));
         }
 
         Ok(())
