@@ -39,8 +39,9 @@ async fn main() {
     let cleanup_dir = config.download_dir.clone();
     let max_age = config.max_file_age_secs;
     let interval = config.cleanup_interval_secs;
+    let max_mb = config.max_dir_size_mb;
     tokio::spawn(async move {
-        run_cleanup_loop(cleanup_dir, max_age, interval).await;
+        run_cleanup_loop(cleanup_dir, max_age, interval, max_mb).await;
     });
 
     // Build Axum routers
@@ -123,26 +124,61 @@ async fn health_handler() -> Json<serde_json::Value> {
     }))
 }
 
-/// Periodic background task that removes files older than max_age_secs
-async fn run_cleanup_loop(dir: PathBuf, max_age_secs: u64, interval_secs: u64) {
+/// Periodic background task that removes files older than max_age_secs and enforces directory quota
+async fn run_cleanup_loop(dir: PathBuf, max_age_secs: u64, interval_secs: u64, max_dir_size_mb: u64) {
     let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+    let max_bytes = max_dir_size_mb * 1024 * 1024;
+
     loop {
         ticker.tick().await;
+        let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+        let mut total_size: u64 = 0;
+        let now = std::time::SystemTime::now();
+
         if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-            let now = std::time::SystemTime::now();
             while let Ok(Some(entry)) = entries.next_entry().await {
                 if let Ok(meta) = entry.metadata().await {
                     if meta.is_file() {
-                        if let Ok(modified) = meta.modified() {
-                            if let Ok(elapsed) = now.duration_since(modified) {
-                                if elapsed.as_secs() > max_age_secs {
-                                    let _ = tokio::fs::remove_file(entry.path()).await;
-                                    info!("Cleaned up expired file: {:?}", entry.path());
-                                }
-                            }
+                        let path = entry.path();
+                        let size = meta.len();
+                        let modified = meta.modified().unwrap_or(now);
+                        let elapsed = now.duration_since(modified).unwrap_or(Duration::ZERO);
+
+                        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        let is_partial = file_name.ends_with(".part")
+                            || file_name.ends_with(".ytdl")
+                            || file_name.ends_with(".tmp")
+                            || file_name.ends_with(".temp");
+
+                        // If file is older than max_age or is a stale partial download older than 30s
+                        if elapsed.as_secs() > max_age_secs || (is_partial && elapsed.as_secs() > 30) {
+                            let _ = tokio::fs::remove_file(&path).await;
+                            info!("Auto-cleaner removed expired file: {:?} ({} KB)", path, size / 1024);
+                        } else {
+                            total_size += size;
+                            files.push((path, size, modified));
                         }
                     }
                 }
+            }
+        }
+
+        // If total downloads folder size exceeds quota, delete oldest files until under 50% quota
+        if total_size > max_bytes {
+            info!(
+                "Downloads directory exceeded limit ({} MB / {} MB). Purging oldest files...",
+                total_size / (1024 * 1024),
+                max_dir_size_mb
+            );
+            files.sort_by_key(|f| f.2);
+            let target_size = max_bytes / 2;
+            for (path, size, _) in files {
+                if total_size <= target_size {
+                    break;
+                }
+                let _ = tokio::fs::remove_file(&path).await;
+                info!("Purged file to free space: {:?}", path);
+                total_size = total_size.saturating_sub(size);
             }
         }
     }
