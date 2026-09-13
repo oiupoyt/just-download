@@ -15,6 +15,7 @@ downloads/
 yt-dlp
 *.log
 *.pid
+just-download-backend*
 
 # Credentials, secrets, sessions
 .env
