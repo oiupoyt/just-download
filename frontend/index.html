@@ -930,7 +930,11 @@
     requestAnimationFrame(animateParticles);
 
     // ── API Configuration ────────────────────────────────────────────────────
-    const DEFAULT_REMOTE_API = 'https://YOUR_BACKEND_URL.trycloudflare.com';
+    const DEFAULT_REMOTE_API = 'https://jd-api.oiupoyt.space';
+    const savedApi = localStorage.getItem('justdownload_api');
+    if (savedApi && (savedApi.includes('trycloudflare.com') || savedApi.includes('YOUR_BACKEND_URL'))) {
+      localStorage.removeItem('justdownload_api');
+    }
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('api')) {
       const customApi = urlParams.get('api').replace(/\/+$/, '');
