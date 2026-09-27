@@ -1,0 +1,47 @@
+stages:
+  - check
+  - build
+
+variables:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+cache:
+  key:
+    files:
+      - backend/Cargo.lock
+    prefix: cargo-backend
+  paths:
+    - backend/target/
+
+fmt:
+  stage: check
+  image: rust:latest
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --check
+    - working_directory: backend
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  allow_failure: true
+
+test:
+  stage: check
+  image: rust:latest
+  script:
+    - cargo test --locked
+    - working_directory: backend
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: rust:latest
+  script:
+    - cargo build --release --locked
+    - working_directory: backend
+  artifacts:
+    name: "just-download-linux-x86_64"
+    paths:
+      - backend/target/release/just-download
+    expire_in: 30 days
