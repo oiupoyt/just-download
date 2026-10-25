@@ -14,6 +14,19 @@ yeah
 - automatic background cleanup of temporary downloads
 - concurrency limiter to safeguard low-resource servers
 
+## configuration
+
+If self-hosting the frontend separately from the backend, configure your API endpoint in `frontend/index.html` by setting `DEFAULT_REMOTE_API`:
+```javascript
+const DEFAULT_REMOTE_API = 'https://your-api-domain.com';
+```
+
+Or connect dynamically in the browser by passing `?api=...`:
+```
+https://your-frontend.com/?api=https://your-api-domain.com
+```
+(Saved to `localStorage` for future visits).
+
 ## backend (rust)
 
 ```bash

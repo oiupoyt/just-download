@@ -930,9 +930,10 @@
     requestAnimationFrame(animateParticles);
 
     // ── API Configuration ────────────────────────────────────────────────────
-    const DEFAULT_REMOTE_API = 'https://jd-api.oiupoyt.space';
+    // Placeholder default: configure your backend URL here or pass ?api=https://your-api.com
+    const DEFAULT_REMOTE_API = 'YOUR_BACKEND_API_URL';
     const savedApi = localStorage.getItem('justdownload_api');
-    if (savedApi && (savedApi.includes('trycloudflare.com') || savedApi.includes('YOUR_BACKEND_URL'))) {
+    if (savedApi && (savedApi.includes('trycloudflare.com') || savedApi.includes('YOUR_BACKEND_URL') || savedApi.includes('YOUR_BACKEND_API_URL'))) {
       localStorage.removeItem('justdownload_api');
     }
     const urlParams = new URLSearchParams(window.location.search);
@@ -941,7 +942,7 @@
       localStorage.setItem('justdownload_api', customApi);
     }
     const isLocalOrigin = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.168.');
-    const API = window.JUSTDOWNLOAD_API || localStorage.getItem('justdownload_api') || (isLocalOrigin ? 'http://localhost:8000' : DEFAULT_REMOTE_API);
+    const API = window.JUSTDOWNLOAD_API || localStorage.getItem('justdownload_api') || (isLocalOrigin ? 'http://localhost:8000' : (DEFAULT_REMOTE_API === 'YOUR_BACKEND_API_URL' ? '' : DEFAULT_REMOTE_API));
 
     let activePlatform = null;
     let activeOpts = { yt: 'yt-video', ig: 'ig-post' };
