@@ -930,8 +930,9 @@
     requestAnimationFrame(animateParticles);
 
     // ── API Configuration ────────────────────────────────────────────────────
-    // Placeholder default: configure your backend URL here or pass ?api=https://your-api.com
-    const DEFAULT_REMOTE_API = 'YOUR_BACKEND_API_URL';
+    // Auto-detects official backend on *.oiupoyt.space; customizable via ?api= or JUSTDOWNLOAD_API
+    const isOiupoyt = window.location.hostname.endsWith('oiupoyt.space');
+    const DEFAULT_REMOTE_API = isOiupoyt ? 'https://jd-api.oiupoyt.space' : 'YOUR_BACKEND_API_URL';
     const savedApi = localStorage.getItem('justdownload_api');
     if (savedApi && (savedApi.includes('trycloudflare.com') || savedApi.includes('YOUR_BACKEND_URL') || savedApi.includes('YOUR_BACKEND_API_URL'))) {
       localStorage.removeItem('justdownload_api');

@@ -1,0 +1,13 @@
+backend
+backend/**
+backend-py
+backend-py/**
+.git
+.git/**
+.wrangler
+.wrangler/**
+.gitignore
+.gitlab-ci.yml
+wrangler.json
+README.md
+LICENSE
